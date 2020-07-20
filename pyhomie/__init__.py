@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+# TODOs
+# =====
+# * Implement remove_node() and remove_property()
+# * Allow changing of device attributes, following device state rules
+
+# Not Implemented
+# ===============
+# Device states: "sleeping" and "alert" as they seem unnecessary
+
 import isodate
 import logging
 import paho.mqtt.client
@@ -24,7 +34,8 @@ class Client:
         self.mqtt_client.loop_start()
 
     def disconnect(self):
-        self.mqtt_client.publish("$state", "disconnected")
+        for device in self.devices.values():
+            device.disconnect()
         self.mqtt_client.disconnect()
 
     @property
@@ -88,6 +99,7 @@ class Device:
         self._id = id
         self._homie_version = "4.0.0"
         self._name = name
+        self._state = "init"
         self._nodes = {}
         self._nodes_init = nodes
         self._extensions = extensions
@@ -104,15 +116,22 @@ class Device:
     def connect(self, client):
         self.client = client
         self.publish("$homie", self.homie_version)
-        self.publish("$name", self.name)
-        self.publish("$state", "init")
+        self.name = self.name
+        self.state = "init"
         self.publish("$nodes", "")
         self.publish("$extensions", ",".join(self.extensions))
         if self.implementation is not None:
-            self.publish("$implementaiton", self.implementation)
+            self.publish("$implementation", self.implementation)
         for node in self._nodes_init:
             self.add_node(node)
-        self.publish("$state", "ready")
+        self.state = "ready"
+
+    @property
+    def connected(self):
+        return self.client.connected and self.state != "disconnected"
+
+    def disconnect(self):
+        self.state = "disconnected"
 
     @property
     def extensions(self):
@@ -127,8 +146,16 @@ class Device:
         return self._id
 
     @property
+    def implementation(self):
+        return self._implementation
+
+    @property
     def name(self):
         return self._name
+
+    @name.setter
+    def name(self, name):
+        self.publish("$name", name)
 
     @property
     def nodes(self):
@@ -154,6 +181,11 @@ class Device:
     def state(self):
         return self._state
 
+    @state.setter
+    def state(self, state):
+        self._state = state
+        self.publish("$state", state)
+
     def subscribe(self, topic):
         if self.client is None:
             raise RuntimeError("Device cannot subscribe before being added to a Client")
@@ -175,7 +207,12 @@ class Node:
             raise RuntimeError("Property [{}] already exists.".format(property.id))
         self._properties[property.id] = property
         property.connect(self)
+        state = self.device.state
+        if state in ["ready", "sleeping", "alert"]:
+            self.device.state = "init"
         self.publish("$properties", ",".join(self.properties.keys()))
+        if state in ["ready", "sleeping", "alert"]:
+            self.device.state = state
 
     def connect(self, device):
         self.device = device
@@ -268,6 +305,10 @@ class Property:
     @property
     def name(self):
         return self._name
+
+    @name.setter
+    def name(self, name):
+        self.publish("$name", name)
 
     def _on_message(self, msg: paho.mqtt.client.MQTTMessage):
         if msg.topic == "set":

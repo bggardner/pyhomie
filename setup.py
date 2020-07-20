@@ -21,7 +21,7 @@ setup(name='pyhomie',
       license='Apache 2.0',
       packages=['pyhomie'],
       install_requires=[
-          'paho-mqtt'
+          'paho-mqtt>=1.4'
       ],
       include_package_data=True,
       zip_safe=False)
