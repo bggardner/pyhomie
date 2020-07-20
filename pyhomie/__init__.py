@@ -7,104 +7,26 @@
 
 # Not Implemented
 # ===============
-# Device states: "sleeping" and "alert" as they seem unnecessary
+# Device states: "sleeping" and "alert"
 
 import isodate
 import logging
 import paho.mqtt.client
 
-class Client:
-
-    def __init__(self, mqtt_client_id, devices=[], topic="homie"):
-        self.connected = False
-        self.mqtt_client = paho.mqtt.client.Client(mqtt_client_id)
-        self.mqtt_client.on_connect = self._on_connect
-        self.mqtt_client.on_message = self._on_message
-        self.mqtt_client.on_disconnect = self._on_disconnect
-        self._devices = {}
-        self._topic = topic
-        for device in devices:
-            if device.id in self._devices:
-                raise RuntimeError("Device [{}] already exists.".format(device.id))
-            self.will_set(device.id)
-            self._devices[device.id] = device
-
-    def connect(self, host, port=1883, keepalive=60, bind_address=""):
-        self.mqtt_client.connect(host, port, keepalive, bind_address)
-        self.mqtt_client.loop_start()
-
-    def disconnect(self):
-        for device in self.devices.values():
-            device.disconnect()
-        self.mqtt_client.disconnect()
-
-    @property
-    def devices(self):
-        return self._devices
-
-    def _on_connect(self, mqtt_client, userdata, flags_dict, rc):
-        if rc == 0:
-            self.connected = True
-        else:
-            self.connected = False
-            return
-        for device in self.devices.values():
-            device.connect(self)
-        self.on_connect(mqtt_client, userdata, flags_dict, rc)
-
-    def on_connect(self, mqtt_client, userdata, flags_dict, rc):
-        pass
-
-    def _on_disconnect(self, mqtt_client, userdata, rc):
-        self.connected = False
-        self.on_disconnect(mqtt_client, userdata, rc)
-
-    def on_disconnect(self, mqtt_client, userdata, rc):
-        pass
-
-    def _on_message(self, client, userdata, msg: paho.mqtt.client.MQTTMessage):
-        if msg.topic.startswith(self.topic + "/"):
-            msg.topic = msg.topic[len(self.topic) + 1:].encode("utf-8")
-            target_device = msg.topic[:msg.topic.index("/")]
-            if target_device in self.devices:
-                device_msg = msg
-                device_msg.topic = msg.topic[len(target_device) + 1:].encode("utf-8")
-                self.devices[target_device]._on_message(device_msg)
-            self.on_message(msg)
-
-    def on_message(self, msg: paho.mqtt.client.MQTTMessage):
-        pass
-
-    def publish(self, topic, payload, qos=1, retain=True):
-        if not self.connected:
-            logging.error("Cannot publish when disconnected")
-        self.mqtt_client.publish(self.topic + "/" + topic, payload, qos, retain)
-
-    def subscribe(self, topic):
-        if not self.connected:
-            logging.error("Cannot subscribe when disconnected")
-        self.mqtt_client.subscribe(self.topic + "/" + topic);
-
-    @property
-    def topic(self):
-        return self._topic
-
-    def will_set(self, device_id):
-        self.mqtt_client.will_set(self.topic + "/" + device_id + "/$state", "lost", qos=1, retain=True)
-
 
 class Device:
 
-    def __init__(self, id, name, nodes=[], extensions=[], implementation=None):
+    def __init__(self, id, name, nodes=[], extensions=[], implementation=None, root_topic="homie"):
         self._id = id
         self._homie_version = "4.0.0"
         self._name = name
-        self._state = "init"
+        self._state = "disconnected"
         self._nodes = {}
         self._nodes_init = nodes
         self._extensions = extensions
         self._implementation = implementation
-        self.client = None
+        self._root_topic = root_topic
+        self._client = paho.mqtt.client.Client()
 
     def add_node(self, node):
         if node.id in self._nodes:
@@ -113,11 +35,25 @@ class Device:
         node.connect(self)
         self.publish("$nodes", ",".join(self.nodes.keys()))
 
-    def connect(self, client):
-        self.client = client
-        self.publish("$homie", self.homie_version)
-        self.name = self.name
+    @property
+    def client(self):
+        return self._client
+
+    def connect(self, host, port=1883, keepalive=60, bind_address=""):
+        if self.state != "disconnected":
+            raise RuntimeError("Device is already connected")
+        self.client.on_connect = self._on_connect
+        self.client.on_message = self._on_message
+        self.client.on_disconnect = self._on_disconnect
+        self.client.will_set(self.topic + "/$state", "lost")
+        self.client.connect(host, port, keepalive, bind_address)
+        self.client.loop_start()
+
+    def _on_connect(self, client, userdata, flags, rc):
+        if rc != 0:
+            raise RuntimeError("Connection to MQTT broker failed")
         self.state = "init"
+        self.name = self.name
         self.publish("$nodes", "")
         self.publish("$extensions", ",".join(self.extensions))
         if self.implementation is not None:
@@ -125,13 +61,11 @@ class Device:
         for node in self._nodes_init:
             self.add_node(node)
         self.state = "ready"
-
-    @property
-    def connected(self):
-        return self.client.connected and self.state != "disconnected"
+        self.publish("$homie", self.homie_version)
 
     def disconnect(self):
         self.state = "disconnected"
+        self.client.disconnect()
 
     @property
     def extensions(self):
@@ -161,7 +95,17 @@ class Device:
     def nodes(self):
         return self._nodes
 
-    def _on_message(self, msg: paho.mqtt.client.MQTTMessage):
+    def _on_disconnect(self, client, userdata, rc):
+        self._state = "disconnected"
+        self.on_disconnect(client, userdata, rc)
+
+    def on_disconnect(self, mqtt_client, userdata, rc):
+        pass
+
+    def _on_message(self, client: paho.mqtt.client.Client, userdata, msg: paho.mqtt.client.MQTTMessage):
+        if not msg.topic.startswith(self.topic + "/"):
+            return
+        msg.topic = msg.topic[len(self.topic) + 1:].encode("utf-8")
         target_node = msg.topic[:msg.topic.index("/")]
         if target_node in self.nodes:
             node_msg = msg
@@ -173,9 +117,13 @@ class Device:
         pass
 
     def publish(self, topic, payload, qos=1, retain=True):
-        if self.client is None:
-            raise RuntimeError("Device cannot publish before being added to a Client")
-        self.client.publish(self.id + "/" + topic, payload, qos, retain)
+        if self.state == "disconnected":
+            raise RuntimeError("Device cannot publish when disconnected")
+        self.client.publish(self.topic + "/" + topic, payload, qos, retain)
+
+    @property
+    def root_topic(self):
+        return self._root_topic
 
     @property
     def state(self):
@@ -187,9 +135,13 @@ class Device:
         self.publish("$state", state)
 
     def subscribe(self, topic):
-        if self.client is None:
-            raise RuntimeError("Device cannot subscribe before being added to a Client")
-        self.client.subscribe(self.id + "/" + topic)
+        if self.state == "disconnected":
+            raise RuntimeError("Device cannot subscribe when disconnected")
+        self.client.subscribe(self.topic + "/" + topic)
+
+    @property
+    def topic(self):
+        return self.root_topic + "/" + self.id
 
 
 class Node:
@@ -214,7 +166,7 @@ class Node:
         if state in ["ready", "sleeping", "alert"]:
             self.device.state = state
 
-    def connect(self, device):
+    def connect(self, device: Device):
         self.device = device
         self.publish("$name", self.name)
         self.publish("$type", self.type)
@@ -335,7 +287,6 @@ class Property:
 
     def on_message(self, msg: paho.mqtt.client.MQTTMessage):
         pass
-
 
     def publish(self, topic="", payload=None):
         if self.node is None:
