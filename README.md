@@ -106,6 +106,7 @@ All message callbacks are passed the object instance to which they were assigned
 `client` (`paho.mqtt.client.Client`, read-only) The client instance used by the device
 
 `extensions` ([str]) List of extensions in the Homie `$extensions` attribute
+
 `homie_version` (str, read-only) Homie Convention version
 
 `implementation` (str) Homie `$implementation` attribute
@@ -149,7 +150,6 @@ All message callbacks are passed the object instance to which they were assigned
 #### Methods
 `connect(node)` Connects to a node
 * `node` (`Node`) Node to which to connect
-
 
 #### Properties
 `data_type` (str) Homie property `$datatype` attribute
