@@ -4,11 +4,8 @@
 # =====
 # * More type checking and value validation
 # * Better exception handling
-
-# Notes
-# ===============
-# Device states "sleeping" and "alert" are not set or handled, but allowed
-
+# * Developer guide
+# * Test suite
 
 from enum import Enum, unique
 import isodate
@@ -34,7 +31,9 @@ class Device:
         self._name = name
         self._state = Device.State.DISCONNECTED
         self._nodes = {}
-        self._nodes_init = nodes
+        self._nodes_init = {}
+        for node in nodes:
+            self._nodes_init[node.id] = node
         self._extensions = extensions
         self._implementation = implementation
         self._root_topic = root_topic
@@ -143,7 +142,7 @@ class Device:
         if self.implementation is not None:
             self.implementation = self.implementation
         self.publish("$nodes")
-        for node in self._nodes_init:
+        for node in self._nodes_init.values():
             self.add_node(node)
         self.extensions = self.extensions
         self.name = self.name
@@ -243,7 +242,9 @@ class Node:
         self._name = name
         self._type = type
         self._properties = {}
-        self._properties_init = properties
+        self._properties_init = {}
+        for property in properties:
+            self._properties_init[property.id] = property
         self._device = None
 
     def add_property(self, property: "Property"):
@@ -294,7 +295,7 @@ class Node:
         self.name = self.name
         self.type = self.type
         self.publish("$properties")
-        for property in self._properties_init:
+        for property in self._properties_init.values():
             self.add_property(property)
         self.on_connect(self)
 
