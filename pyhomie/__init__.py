@@ -155,6 +155,8 @@ class Device:
     def _on_disconnect(self, client, userdata, rc):
         self._state = Device.State.DISCONNECTED
         self._nodes_init = self._nodes
+        for node in self.nodes.values():
+            node._on_disconnect()
         self._nodes = {}
         self.on_disconnect(self)
 
@@ -303,10 +305,11 @@ class Node:
         pass
 
     def _on_disconnect(self):
-        for property_id in self.properties:
-            self.remove_property(property_id)
-        self.publish("$type")
-        self.publish("$name")
+        properties = self.properties
+        for property in self.properties.values():
+            property._on_disconnect()
+        self._properties_init = properties
+        self._properties = {}
         self._device = None
         self.on_disconnect(self)
 
@@ -473,19 +476,6 @@ class Property:
             self.value = self.value
 
     def _on_disconnect(self):
-        self.value = None
-        if self.unit is not None:
-            self.publish("$unit")
-        if self.retained is not None:
-            self.publish("$retained")
-        if self.settable is not None:
-            self.publish("$settable")
-            if self.settable:
-                self.unsubscribe("set")
-        if self.format is not None:
-            self.publish("$format")
-        self.publish("$datatype")
-        self.publish("$name")
         self._node = None
         self.on_disconnect(self)
 
@@ -605,4 +595,4 @@ class Property:
         if self.value != value:
             # TODO: Validate values
             self._value = value
-            self.publish()
+        self.publish()
