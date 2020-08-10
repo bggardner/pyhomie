@@ -404,7 +404,7 @@ class Property:
         self._format = format
         self._settable = bool(settable)
         self._retained = bool(retained)
-        self._unit = str(unit)
+        self._unit = unit
         self._node = None
 
     def connect(self, node):
@@ -483,30 +483,41 @@ class Property:
         pass
 
     def _on_message(self, msg: paho.mqtt.client.MQTTMessage):
-        if msg.topic == "set":
-            # Cast to data type, reverse of byte casting in paho.mqtt.client.Client.publish()
-            if self.data_type == "integer":
-                self.value = int(msg.payload.decode("utf-8"))
-            elif self.data_type == "float":
-                self.value = float(msg.payload.decode("utf-8"))
-            elif self.data_type == "boolean":
-                self.value = msg.payload.decode("utf-8") == "true"
-            elif self.data_type == "string":
-                self.value = msg.payload.decode("utf-8")
-            elif self.data_type == "enum":
-                self.value = msg.payload.decode("utf-8")
-            elif self.data_type == "color":
-                self.value = msg.payload.decode("utf-8")
-            elif self.data_type == "datetime":
-                self.value = isodate.parse_datetime(msg.payload.decode("utf-8"))
-            elif self.data_type == "duration":
-                self.value = isodate.parse_duration(msg.payload.decode("utf-8"))
-            elif isinstance(self.value, (bytes, bytearray)): # Non-standard
-                self.value = msg.payload
+        if self.settable and msg.topic == "set":
+            self._on_set(self._parse(msg.payload.decode()))
         self.on_message(self, msg)
 
     def on_message(self, property: "Property", msg: paho.mqtt.client.MQTTMessage):
         pass
+
+    def _on_set(self, value):
+        self.value = value
+        self.on_set(self)
+
+    def on_set(self, property: "Property"):
+        pass
+
+    def _parse(self, s: str):
+        # Cast to data type, reverse of byte casting in paho.mqtt.client.Client.publish()
+        if self.data_type == "integer":
+            value = int(s)
+        elif self.data_type == "float":
+            value = float(s)
+        elif self.data_type == "boolean":
+            value = s == "true"
+        elif self.data_type == "string":
+            value = s
+        elif self.data_type == "enum":
+            value = s
+        elif self.data_type == "color":
+            value = s
+        elif self.data_type == "datetime":
+            value = isodate.parse_datetime(s)
+        elif self.data_type == "duration":
+            value = isodate.parse_duration(s)
+        else: # Non-standard
+            value = s.encode()
+        return value
 
     def publish(self, topic="", payload=None):
         if self.node is None:
@@ -595,4 +606,5 @@ class Property:
         if self.value != value:
             # TODO: Validate values
             self._value = value
-        self.publish()
+        if self.state != Device.State.DISCONNECTED:
+            self.publish()
