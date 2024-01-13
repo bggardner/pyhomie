@@ -16,15 +16,21 @@ sudo pip3 install .
 import pyhomie
 from time import sleep
 
-def on_connect(device):
-    device.state = pyhomie.Device.State.READY
+def on_connect(device: pyhomie.Device):
+    # Executed after Homie Device initialization
+    # Can be used to start sensor threads that write to property values
+    # Upon return, the Homie Device will enter the "ready" state
+    pass
 
 property = pyhomie.Property("property-id", "Example Property", "int")
 node = pyhomie.Node("node-id", "Example Node", [property])
 device = pyhomie.Device("device-id", "Example Device", [node])
 device.on_connect = on_connect
+# Optional, set MQTT client username/password
+device.client.username_pw_set("username", "password")
 device.connect("mqtt-broker")
 
+# Alternative to using on_connect()
 while True:
     sleep(1)
     if device.state != pyhomie.Device.State.READY:
@@ -32,70 +38,58 @@ while True:
     property.value += 1
 ```
 ## API
-Homie defines a MQTT topic tree that is hierarchical.
-* Root Topic
-    * Device ID
-        * Node ID
-            * Property ID
-            
-Example: `homie/my-device/my-node/my-property`
+`pyhomie` contains three classes that represent a Homie topology, all inheriting the `Topic` abstract base class: `Device`, `Node`, and `Property`
 
-`pyhomie` also takes a hierarchical approach with its object classes:
-* `paho.mqtt.client.Client`
-    * `pyhomie.Device`
-        * `pyhomie.Node`
-            * `pyhomie.Property`
+### Topic (inherited by Device, Node, and Property
 
-While the "child" classes do not extend the parent classes, they `connect()` and `disconnect()` to the Homie (MQTT) "network".
-
-By default, the only subscriptions a device makes are to the Homie broadcast topic and to the `set` topics of settable properties.  The user may call the appropriate  `subscribe()` methods to add subscriptions.
-
-All message callbacks are passed the object instance to which they were assigned, as well as the `paho.mqtt.client.MQTTMessage` from the broker, with the topic *relative* to the Homie topic tree.  For example, a broadcast message topic will only contain the subtopic after `$broadcast/`, and an `on_message` assigned to a property may only be called with the *relative* topic `set`.
-### Common Methods
-`connect(...)` Connects to the parent object; arguments differ by object class
-
-`disconnect()` Disconnects from parent object; same as `paho.mqtt.client.Client.disconnect()`
-
-`on_connect(device)` User-defined callback; called when the object successfully connects to parent object
+#### Methods
+`on_connect(device)` User-defined callback; called when the `Device` connects to the MQTT broker, or when a `Node` or `Property` is added
 * `device` (`Device`) Object instance for using inside callback
 
-`on_disconnect(device)` User-defined callback; called when the object successfully connects from parent object
+`on_disconnect(device)` User-defined callback; called when the `Devices` disconnects from the MQTT broker, or when a `Node` or `Property` is removed
 * `device` (`Device`) Object instance for using inside callback
 
-`on_message(device, msg)` User-defined callback; called when a message is received with a topic at or below the object's position in the topic tree
-* `obj` (`Device`|`Node`|`Property`) `pyhomie` object instance for using inside callback
-* `msg` (`paho.mqtt.client.MQTTMessage`) Message with the topic *relative* to the object
-
-`publish(topic, payload=None, qos=1, retain=True)` Publish to the *relative topic*, otherwise same as `paho.mqtt.client.Client.publish()`
+`on_message(device, msg)` User-defined callback; called when a message is received with a topic at or below the object's position in the topic hierarchy
+* `obj` (`Topic`) `pyhomie` `Topic` instance for using inside callback
+* `msg` (`paho.mqtt.client.MQTTMessage`) Message with the topic *relative* to the object ("property-id" instead of "homie/device-id/node-id/property-id", e.g.)
 
 `subscribe(topic, qos=1)` Subscribe to the *relative* topic, otherwise same as `paho.mqtt.client.Client.subscribe()`
+By default, subscriptions are made to the Homie broadcast topic and to the `set` topics of settable properties.
 
 `unsubscribe(topic)` Unsubscribe to the *relative* topic, otherwise same as `paho.mqtt.client.Client.subscribe()`
-### Common Properties
+
+`update_attribute(key, value, callback=None)` Add or update a Homie attribute. Device will enter the "init" state, publish the change, then enter the "ready" state
+* `key` (str) Homie Attribute ID, without the "$". CAUTION: Do not use pre-defined keys such as `id`, `name`, etc.
+* `value` (...) Attribute value, typically a simple data type (str, int, float, bool)
+* `callback` (Callable) User-defined callback; called after the device enters the "init" state, but before the attribute is updated/published
+
+#### Properties
+`attributes` (dict, read-only) List of Homie Attributes of the instance.
+
 `id` (str, read-only) Homie ID used in the topic tree, provided to the constructor
+
+`is_connected` (bool, read-only) `True` if the device has connected to the MQTT broker
 
 `name` (str) Homie `$name` attribute
 
-`state` (`Device.State`) Homie `$state` attribute (string representation in `state.value`)
 ### Device
-`Device(id, name, nodes=[], implementation=None, root_topic="homie")` constructor
+`Device(id, name, nodes=[], implementation=None, attributes={}, root_topic="homie")` constructor
 * `id` (str) Homie device ID [A-Za-z0-9\-]
 * `name` (str) Homie device `$name` attribute 
 * `nodes` (list[`Node`]) Initial list of the device's nodes; `Node.id`s become the Homie `$nodes` attribute
 * `implementation` (str) Homie device `$implementation` attribute
+* `attributes` (dict) Home device attributes. CAUTION: Will overwrite matching attributes such as `$id`, `$name`, etc.
 * `root_topic` (str) Homie root topic [A-Za-z0-9\-]
-#### Methods
-`add_node(node)` Adds the specified node to the device
-* `node` (`Node`) Node to be added
 
+#### Methods
 `connect(host, port=1883, keepalive=60, bind_address="")` Connects to MQTT broker, same parameters as `paho.mqtt.client.Client.connect()`
+
+`disconnect()` Disconnects from the broker; same as `paho.mqtt.client.Client.disconnect()`
 
 `on_broadcast(device, msg)` User-defined callback; called when a Homie `$broadcast` message is received
 * `device` (`Device`) Device instance for using inside callback
-* `msg` (`paho.mqtt.client.MQTTMessage`) Broadcast message with the *relative* topic
+* `msg` (`paho.mqtt.client.MQTTMessage`) Broadcast message with the *relative* topic (i.e. with root topic and "/$broadcast/" removed)
 
-`remove_node(node_id)` Removes a node from the device, returns the removed `Node` object
-* `node_id` (str) ID of the node to be removed
 #### Properties
 `class State(Enum)`
 * `DISCONNECTED` Not connected to the MQTT broker
@@ -115,28 +109,19 @@ All message callbacks are passed the object instance to which they were assigned
 
 `root_topic` (str, read-only) Homie root topic provided to the constructor
 
-`topic` (str, read-only) Fully-qualified MQTT topic
 ### Node
-`Node(id, name, type, properties=[])` constructor
+`Node(id, name, type, properties=[], attributes={})` constructor
 * `id` (str) Homie node ID [A-Za-z0-9\-]
 * `name` (str) Homie node `$name` attribute 
 * `type` (str) Homie node `$type` attribute 
 * `properties` ([`Properties`]) List of `Property` object whose IDs comprise the Homie `$properties` attribute
-#### Methods
-`add_property(property)` Adds a property to the node
-* `property` (`Property`) Property to be added
+* `attributes` (dict) Home device attributes. CAUTION: Will overwrite matching attributes such as `$id`, `$name`, etc.
 
-`connect(device)` Connects to a device
-* `device` (`Device`) Device to which to connect
-
-`remove_property(property_id)` Removes a property from the node, returns the removed `Property` object
-* `property_id` (str) ID of the property to be removed
 #### Properties
-`device` (`Device`, read-only) If connected to a device, the device instance, `None` otherwise
-
 `properties` ([`Property`]) List of `Property` objects whose ids comprise the Homie `$properties` attribute
 
 `type` (str) Homie node `$type` attribute
+
 ### Property
 `Property(id, name, data_type, value=None, format=None, settable=None, retained=None, unit=None)` constructor
 * `id` (str) Homie property ID [A-Za-z0-9\-]
@@ -147,16 +132,16 @@ All message callbacks are passed the object instance to which they were assigned
 * `settable` (bool) Homie property `$settable` attribute
 * `retained` (bool) Homie property `$retained` attribute
 * `unit` (str) Homie property `$unit` attribute
+* `attributes` (dict) Home device attributes. CAUTION: Will overwrite matching attributes such as `$id`, `$name`, etc.
+
 #### Methods
-`connect(node)` Connects to a node
-* `node` (`Node`) Node to which to connect
+`on_set(property)` User-defined callback; called when the Property's "set" topic value changes
+* `property` (Property) New value can be accessed with `property.value`
 
 #### Properties
-`data_type` (str) Homie property `$datatype` attribute
+`datatype` (str) Homie property `$datatype` attribute
 
 `format` (str) Homie property `$format` attribute
-
-`node` (`Node`, read-only) If connected to a node, the node instance, `None` otherwise
 
 `retained` (bool) Homie property `$retained` attribute
 
