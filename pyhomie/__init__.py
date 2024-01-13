@@ -84,12 +84,12 @@ class Topic:
     def subscribe(self, topic, qos=1):
         if not self.is_connected:
             raise RuntimeError("Cannot subscribe when device is disconnected")
-        self._device.client.subscribe(f"{self.topic}/topic", qos)
+        self._device.client.subscribe(f"{self._topic}/{topic}", qos)
 
     def unsubscribe(self, topic):
         if not self.is_connected:
             raise RuntimeError("Cannot unsubscribe when device is disconnected")
-        self._device.client.unsubscribe(f"{self.topic}/topic")
+        self._device.client.unsubscribe(f"{self.topic}/{topic}")
 
     def update_attribute(self, key, value, callback=None):
         if self._device is None:
@@ -168,7 +168,7 @@ class Device(Topic):
         if node_id in self.nodes:
             node_msg = msg
             node_msg.topic = msg.topic[len(node_id) + 1:].encode("utf-8")
-            self.nodes[target_node]._on_message(node_msg)
+            self.nodes[node_id]._on_message(node_msg)
         self.on_message(self, msg)
 
     @property
@@ -415,5 +415,5 @@ class Property(Topic):
         if self.value != value:
             # TODO: Validate values
             self._value = value
-            if self._device.state != Device.State.DISCONNECTED:
+            if self.is_connected:
                 self._publish_value()
