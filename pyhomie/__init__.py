@@ -122,7 +122,7 @@ class Device(Topic):
 
     RESTRICTED_STATES = [State.READY, State.SLEEPING, State.ALERT] # States where some attributes cannot be changed
 
-    def __init__(self, id, name, nodes=[], extensions=[], implementation=None, attributes={}, root_topic="homie"):
+    def __init__(self, id, name, nodes=[], extensions=[], attributes={}, root_topic="homie"):
         self._attributes = {"homie": "4.0.0"}
         super().__init__(id, name)
         self._attributes["state"] = Device.State.DISCONNECTED
@@ -131,8 +131,7 @@ class Device(Topic):
         for node in nodes:
             self._attributes["nodes"][node.id] = node
         self._attributes["extensions"] = extensions
-        if implementation is not None:
-            self._attributes["implementation"] = implementation
+        self._attributes["implementation"] = "pyhomie"
         self._parent_topic = root_topic
         self._client = paho.mqtt.client.Client()
 
@@ -206,12 +205,6 @@ class Device(Topic):
     @property
     def implementation(self):
         return self._implementation
-
-    @implementation.setter
-    def implementation(self, implementation):
-        if not isinstance(implemetation, str):
-            raise TypeError("Implementation must be a string")
-        self.update_attribute("implementation", implementation)
 
     @property
     def nodes(self):
